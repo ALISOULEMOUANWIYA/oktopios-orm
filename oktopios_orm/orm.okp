@@ -1,0 +1,179 @@
+// =====================================================================
+//  oktopios-framework — Couche ORM
+//  Écrit EN Oktopios, s'appuie sur la réflexion et les décorateurs du
+//  langage (>= 0.6.0). Chargé via :  use "framework/orm.okp"
+//
+//  - Schema : migrations (génère le schéma SQL depuis les modèles décorés)
+//  - Repo   : dépôt générique (save / all / findBy / remove + hydratation)
+//  - Query  : constructeur de requêtes fluide
+//
+//  Décorateurs reconnus :
+//    @Entity("table")   (classe)  -> nom de table
+//    @Column("colonne") (champ)   -> nom de colonne
+//    @Id                (champ)   -> clé primaire
+// =====================================================================
+inject Type
+inject DataImport
+
+// ---------------------------------------------------------------------
+//  Schema — génération de schéma / migrations
+// ---------------------------------------------------------------------
+class Schema {
+    fun sqlType(t: string): string {
+        if (t == "int")   { return "INTEGER" }
+        if (t == "float") { return "REAL" }
+        if (t == "bool")  { return "INTEGER" }
+        return "TEXT"
+    }
+
+    fun tableName(entity: any): string {
+        var e = Type.annotation(entity, "Entity")
+        if (e != null) { return e[0] }
+        return Type.className(entity)
+    }
+
+    fun columnName(entity: any, champ: string): string {
+        var c = Type.fieldAnnotation(entity, champ, "Column")
+        if (c != null) { return c[0] }
+        return champ
+    }
+
+    fun idField(entity: any): string {
+        for (f in Type.fields(entity)) {
+            if (Type.fieldAnnotation(entity, f, "Id") != null) { return f }
+        }
+        return "id"
+    }
+
+    fun createTableSQL(entity: any): string {
+        var defs = ""
+        for (f in Type.fields(entity)) {
+            if (defs != "") { defs = defs + ", " }
+            var ligne = this.columnName(entity, f) + " " + this.sqlType(Type.fieldType(entity, f))
+            if (Type.fieldAnnotation(entity, f, "Id") != null) {
+                ligne = ligne + " PRIMARY KEY"
+            }
+            defs = defs + ligne
+        }
+        return "CREATE TABLE IF NOT EXISTS " + this.tableName(entity) + " (" + defs + ")"
+    }
+
+    // Crée la table dans la base à partir d'un exemple d'entité (modèle décoré)
+    fun migrate(db: string, entity: any): string {
+        var sql = this.createTableSQL(entity)
+        DataImport.execSQL(db, sql, [])
+        return sql
+    }
+}
+
+// ---------------------------------------------------------------------
+//  Repo — dépôt de données générique pour un modèle
+// ---------------------------------------------------------------------
+class Repo {
+    var db: string
+    var table: string
+    var model: string
+    var schema: Schema
+
+    // `sample` : une instance du modèle, utilisée pour lire les métadonnées
+    fun __construct(db: string, sample: any) {
+        this.db = db
+        this.schema = new Schema()
+        this.table = this.schema.tableName(sample)
+        this.model = Type.className(sample)
+    }
+
+    fun save(entity: any): int {
+        var colonnes = ""
+        var marques = ""
+        var valeurs = []
+        for (f in Type.fields(entity)) {
+            if (colonnes != "") {
+                colonnes = colonnes + ", "
+                marques = marques + ", "
+            }
+            colonnes = colonnes + this.schema.columnName(entity, f)
+            marques = marques + "?"
+            valeurs = valeurs + [Type.get(entity, f)]
+        }
+        var sql = "INSERT INTO " + this.table + " (" + colonnes + ") VALUES (" + marques + ")"
+        return DataImport.execSQL(this.db, sql, valeurs)
+    }
+
+    // Transforme les lignes SQL (colonnes) en instances du modèle (champs)
+    fun hydrate(lignes: any): any {
+        var objets = []
+        for (ligne in lignes) {
+            var obj = Type.create(this.model)
+            for (f in Type.fields(obj)) {
+                var col = this.schema.columnName(obj, f)
+                Type.set(obj, f, ligne[col])
+            }
+            objets = objets + [obj]
+        }
+        return objets
+    }
+
+    fun all(): any {
+        return this.hydrate(DataImport.execSQL(this.db, "SELECT * FROM " + this.table, []))
+    }
+
+    fun findBy(colonne: string, valeur: any): any {
+        var sql = "SELECT * FROM " + this.table + " WHERE " + colonne + " = ?"
+        return this.hydrate(DataImport.execSQL(this.db, sql, [valeur]))
+    }
+
+    fun remove(colonne: string, valeur: any): int {
+        var sql = "DELETE FROM " + this.table + " WHERE " + colonne + " = ?"
+        return DataImport.execSQL(this.db, sql, [valeur])
+    }
+}
+
+// ---------------------------------------------------------------------
+//  Query — constructeur de requêtes fluide
+// ---------------------------------------------------------------------
+class Query {
+    var db: string
+    var table: string
+    var champs: string
+    var conds: string
+    var params: any
+    var ordre: string
+
+    fun __construct(db: string, table: string) {
+        this.db = db
+        this.table = table
+        this.champs = "*"
+        this.conds = ""
+        this.params = []
+        this.ordre = ""
+    }
+
+    fun select(champs: string): Query {
+        this.champs = champs
+        return this
+    }
+
+    fun where(colonne: string, op: string, valeur: any): Query {
+        if (this.conds != "") { this.conds = this.conds + " AND " }
+        this.conds = this.conds + colonne + " " + op + " ?"
+        this.params = this.params + [valeur]
+        return this
+    }
+
+    fun orderBy(colonne: string, sens: string): Query {
+        this.ordre = " ORDER BY " + colonne + " " + sens
+        return this
+    }
+
+    fun sql(): string {
+        var s = "SELECT " + this.champs + " FROM " + this.table
+        if (this.conds != "") { s = s + " WHERE " + this.conds }
+        s = s + this.ordre
+        return s
+    }
+
+    fun get(): any {
+        return DataImport.execSQL(this.db, this.sql(), this.params)
+    }
+}

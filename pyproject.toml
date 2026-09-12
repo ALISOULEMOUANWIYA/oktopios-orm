@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oktopios-orm"
+version = "0.1.0"
+description = "ORM pour le langage Oktopios — modeles decores, migrations, query-builder (facon Doctrine / Django ORM)"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.8"
+authors = [{ name = "Mouanwiya Ali Soule" }]
+keywords = ["oktopios", "orm", "database", "sqlite", "migrations", "okp"]
+dependencies = ["oktopios>=0.7.0"]
+
+[project.urls]
+Homepage = "https://github.com/ALISOULEMOUANWIYA/oktopios-orm"
+Language = "https://pypi.org/project/oktopios/"
+
+[tool.setuptools.packages.find]
+include = ["oktopios_orm*"]
+
+[tool.setuptools.package-data]
+"oktopios_orm" = ["*.okp"]

@@ -1,0 +1,45 @@
+// Démo oktopios-orm. Lancer depuis la racine du projet :  okp examples/blog.okp
+// (ou, une fois installé par pip, `use "oktopios_orm/orm.okp"` marche partout)
+use "oktopios_orm/orm.okp"
+inject Type
+inject DataImport
+
+@Entity("articles")
+class Article {
+    @Id
+    var id: int
+    @Column("titre")
+    var title: string
+    var vues: int
+
+    fun __construct(title: string, vues: int) {
+        this.title = title
+        this.vues = vues
+    }
+    fun show(): string {
+        return "#" + this.id + " " + this.title + " (" + this.vues + " vues)"
+    }
+}
+
+var db = "blog.db"
+var sample = new Article("", 0)
+var schema = new Schema()
+
+DataImport.execSQL(db, "DROP TABLE IF EXISTS articles", [])
+print("== Migration ==")
+print(schema.migrate(db, sample))
+
+var repo = new Repo(db, sample)
+var a = new Article("oktopios-orm", 100)
+Type.set(a, "id", 1)
+repo.save(a)
+var b = new Article("migrations & query", 40)
+Type.set(b, "id", 2)
+repo.save(b)
+
+print("== Tous ==")
+for (x in repo.all()) { print("  " + x.show()) }
+
+print("== Query (vues > 50, desc) ==")
+var q = new Query(db, "articles")
+print(q.select("id, titre, vues").where("vues", ">", 50).orderBy("vues", "DESC").get())
