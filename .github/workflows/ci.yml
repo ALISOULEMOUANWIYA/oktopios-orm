@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout oktopios-orm
+        uses: actions/checkout@v4
+
+      # Le langage (dépendance) depuis les sources — indépendant de PyPI.
+      - name: Checkout oktopios (langage)
+        uses: actions/checkout@v4
+        with:
+          repository: ALISOULEMOUANWIYA/oktopios
+          path: .oktopios-lang
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer langage + ORM + pytest
+        run: |
+          python -m pip install --upgrade pip
+          pip install ./.oktopios-lang
+          pip install .
+          pip install pytest
+
+      - name: Lancer les tests ORM
+        run: pytest -q
