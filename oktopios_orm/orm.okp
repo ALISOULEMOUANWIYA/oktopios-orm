@@ -83,18 +83,23 @@ class Repo {
         this.model = Type.className(sample)
     }
 
+    // Insère l'entité. La clé primaire (@Id) est omise pour laisser la base
+    // l'auto-générer ; `save` renvoie l'identifiant de la ligne créée.
     fun save(entity: any): int {
+        var idf = this.schema.idField(entity)
         var colonnes = ""
         var marques = ""
         var valeurs = []
         for (f in Type.fields(entity)) {
-            if (colonnes != "") {
-                colonnes = colonnes + ", "
-                marques = marques + ", "
+            if (f != idf) {
+                if (colonnes != "") {
+                    colonnes = colonnes + ", "
+                    marques = marques + ", "
+                }
+                colonnes = colonnes + this.schema.columnName(entity, f)
+                marques = marques + "?"
+                valeurs = valeurs + [Type.get(entity, f)]
             }
-            colonnes = colonnes + this.schema.columnName(entity, f)
-            marques = marques + "?"
-            valeurs = valeurs + [Type.get(entity, f)]
         }
         var sql = "INSERT INTO " + this.table + " (" + colonnes + ") VALUES (" + marques + ")"
         return DataImport.execSQL(this.db, sql, valeurs)
