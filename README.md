@@ -64,13 +64,51 @@ Exécuter : `okp examples/blog.okp`
 - **`Query`** — constructeur de requêtes fluide : `select().where().orderBy().get()`,
   paramétré (anti-injection).
 
+## Relations `@ManyToOne` 🔗
+
+```okp
+@Entity("auteurs")
+class Auteur { @Id var id: int  @Column("nom") var nom: string }
+
+@Entity("articles")
+class Article {
+    @Id var id: int
+    @Column("titre") var titre: string
+    @ManyToOne("Auteur") var auteur: any      // colonne FK : auteur_id
+}
+
+var repoA = new Repo(db, new Auteur())
+var a = new Auteur(); a.nom = "Awa"; repoA.save(a)   // save réaffecte a.id
+
+var repoArt = new Repo(db, new Article())
+var art = new Article(); art.titre = "Hello"; art.auteur = a
+repoArt.save(art)                                    // écrit auteur_id = a.id
+
+var trouve = repoArt.find(1)
+print(trouve.auteur.nom)                             // -> "Awa" (objet lié chargé)
+```
+
+`@ManyToOne("Classe")` crée une colonne de clé étrangère `<champ>_id` (ou le 2ᵉ
+argument), écrite par `save` et chargée par `find`/`findBy` (un niveau).
+
+## Pagination 📄
+
+```okp
+print(repoArt.count())            // nombre total de lignes
+for (x in repoArt.page(10, 2)) {  // page 2, 10 par page (entités hydratées)
+    print(x.titre)
+}
+// Bas niveau : Query.limit(n).offset(d) + Query.count()
+```
+
 ## Décorateurs reconnus
 
 | Décorateur | Cible | Effet |
 |---|---|---|
 | `@Entity("table")` | classe | nom de la table |
 | `@Column("colonne")` | champ | nom de la colonne |
-| `@Id` | champ | clé primaire |
+| `@Id` | champ | clé primaire (auto-générée, réaffectée par `save`) |
+| `@ManyToOne("Classe", "fk"?)` | champ | relation vers une autre entité |
 
 ## Licence
 

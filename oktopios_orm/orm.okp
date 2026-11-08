@@ -45,15 +45,39 @@ class Schema {
         return "id"
     }
 
+    // --- Relations @ManyToOne("ClasseLiee", "colonne_fk"?) --------------
+    fun isRelation(entity: any, f: string): bool {
+        return Type.fieldAnnotation(entity, f, "ManyToOne") != null
+    }
+
+    fun relClass(entity: any, f: string): string {
+        var a = Type.fieldAnnotation(entity, f, "ManyToOne")
+        return a[0]
+    }
+
+    // Colonne de clé étrangère : 2e argument du décorateur, sinon <champ>_id.
+    fun fkColumn(entity: any, f: string): string {
+        var a = Type.fieldAnnotation(entity, f, "ManyToOne")
+        var n = 0
+        for (x in a) { n = n + 1 }
+        if (n > 1) { return a[1] }
+        return f + "_id"
+    }
+
     fun createTableSQL(entity: any): string {
         var defs = ""
         for (f in Type.fields(entity)) {
             if (defs != "") { defs = defs + ", " }
-            var ligne = this.columnName(entity, f) + " " + this.sqlType(Type.fieldType(entity, f))
-            if (Type.fieldAnnotation(entity, f, "Id") != null) {
-                ligne = ligne + " PRIMARY KEY"
+            if (this.isRelation(entity, f) == true) {
+                // Relation -> colonne de clé étrangère entière.
+                defs = defs + this.fkColumn(entity, f) + " INTEGER"
+            } else {
+                var ligne = this.columnName(entity, f) + " " + this.sqlType(Type.fieldType(entity, f))
+                if (Type.fieldAnnotation(entity, f, "Id") != null) {
+                    ligne = ligne + " PRIMARY KEY"
+                }
+                defs = defs + ligne
             }
-            defs = defs + ligne
         }
         return "CREATE TABLE IF NOT EXISTS " + this.tableName(entity) + " (" + defs + ")"
     }
@@ -85,6 +109,7 @@ class Repo {
 
     // Insère l'entité. La clé primaire (@Id) est omise pour laisser la base
     // l'auto-générer ; `save` renvoie l'identifiant de la ligne créée.
+    // Pour une relation @ManyToOne, on écrit la clé étrangère (id de l'objet lié).
     fun save(entity: any): int {
         var idf = this.schema.idField(entity)
         var colonnes = ""
@@ -96,25 +121,73 @@ class Repo {
                     colonnes = colonnes + ", "
                     marques = marques + ", "
                 }
-                colonnes = colonnes + this.schema.columnName(entity, f)
-                marques = marques + "?"
-                valeurs = valeurs + [Type.get(entity, f)]
+                if (this.schema.isRelation(entity, f) == true) {
+                    colonnes = colonnes + this.schema.fkColumn(entity, f)
+                    marques = marques + "?"
+                    var lie = Type.get(entity, f)
+                    if (lie == null) {
+                        valeurs = valeurs + [null]
+                    } else {
+                        valeurs = valeurs + [Type.get(lie, this.schema.idField(lie))]
+                    }
+                } else {
+                    colonnes = colonnes + this.schema.columnName(entity, f)
+                    marques = marques + "?"
+                    valeurs = valeurs + [Type.get(entity, f)]
+                }
             }
         }
         var sql = "INSERT INTO " + this.table + " (" + colonnes + ") VALUES (" + marques + ")"
-        return DataImport.execSQL(this.db, sql, valeurs)
+        var nouvelId = DataImport.execSQL(this.db, sql, valeurs)
+        // Réaffecte la clé primaire générée sur l'entité (comme Django/Doctrine),
+        // pour que les relations ultérieures écrivent le bon id.
+        Type.set(entity, idf, nouvelId)
+        return nouvelId
     }
 
-    // Transforme les lignes SQL (colonnes) en instances du modèle (champs)
-    fun hydrate(lignes: any): any {
-        var objets = []
-        for (ligne in lignes) {
-            var obj = Type.create(this.model)
-            for (f in Type.fields(obj)) {
+    // Transforme les lignes SQL (colonnes) en instances du modèle (champs).
+    // `avecRelations` : si vrai, charge aussi les objets liés (@ManyToOne),
+    // un seul niveau de profondeur (pas de récursion sur leurs relations).
+    fun hydrateOne(ligne: any, avecRelations: bool): any {
+        var obj = Type.create(this.model)
+        for (f in Type.fields(obj)) {
+            if (this.schema.isRelation(obj, f) == true) {
+                if (avecRelations == true) {
+                    var fk = ligne[this.schema.fkColumn(obj, f)]
+                    if (fk != null) {
+                        var relRepo = new Repo(this.db, Type.create(this.schema.relClass(obj, f)))
+                        var lies = relRepo.findByRaw(relRepo.idColumn(), fk, false)
+                        var m = 0
+                        for (z in lies) { m = m + 1 }
+                        if (m > 0) { Type.set(obj, f, lies[0]) }
+                    }
+                }
+            } else {
                 var col = this.schema.columnName(obj, f)
                 Type.set(obj, f, ligne[col])
             }
-            objets = objets + [obj]
+        }
+        return obj
+    }
+
+    fun hydrate(lignes: any): any {
+        var objets = []
+        for (ligne in lignes) {
+            objets = objets + [this.hydrateOne(ligne, true)]
+        }
+        return objets
+    }
+
+    fun idColumn(): string {
+        var ex = Type.create(this.model)
+        return this.schema.columnName(ex, this.schema.idField(ex))
+    }
+
+    // Hydrate une liste de lignes, en chargeant (ou non) les relations.
+    fun hydrateAll(lignes: any, avecRelations: bool): any {
+        var objets = []
+        for (ligne in lignes) {
+            objets = objets + [this.hydrateOne(ligne, avecRelations)]
         }
         return objets
     }
@@ -124,13 +197,42 @@ class Repo {
     }
 
     fun findBy(colonne: string, valeur: any): any {
+        return this.findByRaw(colonne, valeur, true)
+    }
+
+    // Variante de findBy avec contrôle du chargement des relations
+    // (utilisée en interne pour éviter la récursion lors de l'hydratation).
+    fun findByRaw(colonne: string, valeur: any, avecRelations: bool): any {
         var sql = "SELECT * FROM " + this.table + " WHERE " + colonne + " = ?"
-        return this.hydrate(DataImport.execSQL(this.db, sql, [valeur]))
+        return this.hydrateAll(DataImport.execSQL(this.db, sql, [valeur]), avecRelations)
+    }
+
+    // Récupère une entité par son id (relations chargées), ou null.
+    fun find(id: any): any {
+        var lies = this.findByRaw(this.idColumn(), id, true)
+        var n = 0
+        for (x in lies) { n = n + 1 }
+        if (n == 0) { return null }
+        return lies[0]
     }
 
     fun remove(colonne: string, valeur: any): int {
         var sql = "DELETE FROM " + this.table + " WHERE " + colonne + " = ?"
         return DataImport.execSQL(this.db, sql, [valeur])
+    }
+
+    // Nombre total de lignes de la table.
+    fun count(): int {
+        var lignes = DataImport.execSQL(this.db, "SELECT COUNT(*) AS n FROM " + this.table, [])
+        return lignes[0]["n"]
+    }
+
+    // Une page d'entités (relations chargées). `perPage` et `page` sont des
+    // entiers (page >= 1).
+    fun page(perPage: int, page: int): any {
+        var dec = (page - 1) * perPage
+        var sql = "SELECT * FROM " + this.table + " LIMIT " + perPage + " OFFSET " + dec
+        return this.hydrate(DataImport.execSQL(this.db, sql, []))
     }
 }
 
@@ -144,6 +246,7 @@ class Query {
     var conds: string
     var params: any
     var ordre: string
+    var borne: string
 
     fun __construct(db: string, table: string) {
         this.db = db
@@ -152,6 +255,17 @@ class Query {
         this.conds = ""
         this.params = []
         this.ordre = ""
+        this.borne = ""
+    }
+
+    // Pagination : LIMIT n [OFFSET d]
+    fun limit(n: any): Query {
+        this.borne = " LIMIT " + n
+        return this
+    }
+    fun offset(d: any): Query {
+        this.borne = this.borne + " OFFSET " + d
+        return this
     }
 
     fun select(champs: string): Query {
@@ -175,10 +289,20 @@ class Query {
         var s = "SELECT " + this.champs + " FROM " + this.table
         if (this.conds != "") { s = s + " WHERE " + this.conds }
         s = s + this.ordre
+        s = s + this.borne
         return s
     }
 
     fun get(): any {
         return DataImport.execSQL(this.db, this.sql(), this.params)
+    }
+
+    // Nombre total de lignes correspondant aux conditions (sans borne) —
+    // utile pour calculer le nombre de pages.
+    fun count(): int {
+        var s = "SELECT COUNT(*) AS n FROM " + this.table
+        if (this.conds != "") { s = s + " WHERE " + this.conds }
+        var lignes = DataImport.execSQL(this.db, s, this.params)
+        return lignes[0]["n"]
     }
 }
