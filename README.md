@@ -130,6 +130,39 @@ for (x in repoArt.page(10, 2)) {  // page 2, 10 par page (entités hydratées)
 // Bas niveau : Query.limit(n).offset(d) + Query.count()
 ```
 
+## Query enrichi 🔎
+
+```okp
+// constructeur fluide, puis hydratation en entités
+var actifs = repo.hydrateRows(
+    repo.query()
+        .where("age", ">", 18)
+        .orWhere("role", "=", "admin")
+        .orderBy("nom", "ASC")
+        .limit(20)
+        .get()
+)
+
+repo.query().whereIn("id", [1, 2, 3]).count()        // IN (…)
+repo.query().like("titre", "%okp%").first()          // LIKE, 1re ligne | null
+repo.query().join("auteurs a", "a.id = articles.auteur_id").get()
+```
+
+## Migrations incrémentales (façon Alembic) 🧬
+
+Suit les migrations déjà appliquées (table `oktopios_migrations`) et n'exécute
+que les nouvelles, dans l'ordre — **idempotent** :
+
+```okp
+var mig = new Migrator("app.db")
+var n = mig.migrer([
+    { "nom": "001_users",  "sql": "CREATE TABLE users (id INTEGER PRIMARY KEY, nom TEXT)" },
+    { "nom": "002_ville",  "sql": "ALTER TABLE users ADD COLUMN ville TEXT" }
+])
+print(n)                    // nb réellement appliquées (0 au 2e lancement)
+print(mig.appliquees())    // ["001_users", "002_ville"]
+```
+
 ## Décorateurs reconnus
 
 | Décorateur | Cible | Effet |

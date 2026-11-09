@@ -338,6 +338,17 @@ class Repo {
         var sql = "SELECT * FROM " + this.table + " LIMIT " + perPage + " OFFSET " + dec
         return this.hydrate(DataImport.execSQL(this.db, sql, []))
     }
+
+    // Constructeur de requête lié à la table de ce dépôt.
+    //   repo.hydrateRows(repo.query().where("age", ">", 18).orderBy("nom","ASC").get())
+    fun query(): Query {
+        return new Query(this.db, this.table)
+    }
+
+    // Hydrate des lignes SQL (ex. résultat d'un Query) en entités du modèle.
+    fun hydrateRows(lignes: any): any {
+        return this.hydrateAll(lignes, true)
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -351,6 +362,7 @@ class Query {
     var params: any
     var ordre: string
     var borne: string
+    var jointures: string
 
     fun __construct(db: string, table: string) {
         this.db = db
@@ -360,6 +372,7 @@ class Query {
         this.params = []
         this.ordre = ""
         this.borne = ""
+        this.jointures = ""
     }
 
     // Pagination : LIMIT n [OFFSET d]
@@ -377,10 +390,46 @@ class Query {
         return this
     }
 
+    // Condition AND : colonne op ?  (ex. where("age", ">", 18))
     fun where(colonne: string, op: string, valeur: any): Query {
         if (this.conds != "") { this.conds = this.conds + " AND " }
         this.conds = this.conds + colonne + " " + op + " ?"
         this.params = this.params + [valeur]
+        return this
+    }
+
+    // Condition OR.
+    fun orWhere(colonne: string, op: string, valeur: any): Query {
+        if (this.conds != "") { this.conds = this.conds + " OR " }
+        this.conds = this.conds + colonne + " " + op + " ?"
+        this.params = this.params + [valeur]
+        return this
+    }
+
+    // colonne IN (?, ?, …)
+    fun whereIn(colonne: string, valeurs: any): Query {
+        var marques = ""
+        for (v in valeurs) {
+            if (marques != "") { marques = marques + ", " }
+            marques = marques + "?"
+            this.params = this.params + [v]
+        }
+        if (this.conds != "") { this.conds = this.conds + " AND " }
+        this.conds = this.conds + colonne + " IN (" + marques + ")"
+        return this
+    }
+
+    // colonne LIKE ?   (ex. like("titre", "%okp%"))
+    fun like(colonne: string, motif: any): Query {
+        if (this.conds != "") { this.conds = this.conds + " AND " }
+        this.conds = this.conds + colonne + " LIKE ?"
+        this.params = this.params + [motif]
+        return this
+    }
+
+    // JOIN brut : join("auteurs a", "a.id = articles.auteur_id")
+    fun join(table: string, on: string): Query {
+        this.jointures = this.jointures + " JOIN " + table + " ON " + on
         return this
     }
 
@@ -391,6 +440,7 @@ class Query {
 
     fun sql(): string {
         var s = "SELECT " + this.champs + " FROM " + this.table
+        s = s + this.jointures
         if (this.conds != "") { s = s + " WHERE " + this.conds }
         s = s + this.ordre
         s = s + this.borne
@@ -401,6 +451,13 @@ class Query {
         return DataImport.execSQL(this.db, this.sql(), this.params)
     }
 
+    // Première ligne, ou null.
+    fun first(): any {
+        var lignes = this.get()
+        for (r in lignes) { return r }
+        return null
+    }
+
     // Nombre total de lignes correspondant aux conditions (sans borne) —
     // utile pour calculer le nombre de pages.
     fun count(): int {
@@ -408,5 +465,54 @@ class Query {
         if (this.conds != "") { s = s + " WHERE " + this.conds }
         var lignes = DataImport.execSQL(this.db, s, this.params)
         return lignes[0]["n"]
+    }
+}
+
+// ---------------------------------------------------------------------
+//  Migrator — migrations incrémentales (façon Alembic)
+//  Suit les migrations appliquées dans une table `oktopios_migrations`
+//  et n'exécute que celles qui manquent, dans l'ordre fourni.
+// ---------------------------------------------------------------------
+class Migrator {
+    var db: string
+
+    fun __construct(db: string) {
+        this.db = db
+        DataImport.execSQL(db, "CREATE TABLE IF NOT EXISTS oktopios_migrations (nom TEXT PRIMARY KEY, applique_le TEXT)", [])
+    }
+
+    fun estApplique(nom: any): bool {
+        var lignesSql = DataImport.execSQL(this.db, "SELECT nom FROM oktopios_migrations WHERE nom = ?", [nom])
+        var n = 0
+        for (r in lignesSql) { n = n + 1 }
+        return n > 0
+    }
+
+    // Applique une migration (SQL brut) si pas déjà faite. Renvoie true si
+    // elle vient d'être appliquée, false si elle l'était déjà.
+    fun appliquer(nom: any, sql: any): bool {
+        if (this.estApplique(nom) == true) { return false }
+        DataImport.execSQL(this.db, sql, [])
+        DataImport.execSQL(this.db, "INSERT INTO oktopios_migrations (nom, applique_le) VALUES (?, datetime('now'))", [nom])
+        return true
+    }
+
+    // Applique une liste ORDONNÉE de migrations { "nom": ..., "sql": ... }.
+    // Idempotent : relancer n'applique que les nouvelles. Renvoie le nombre
+    // réellement appliquées.
+    fun migrer(liste: any): int {
+        var n = 0
+        for (m in liste) {
+            if (this.appliquer(m["nom"], m["sql"]) == true) { n = n + 1 }
+        }
+        return n
+    }
+
+    // Noms des migrations déjà appliquées (ordre d'application).
+    fun appliquees(): any {
+        var lignesSql = DataImport.execSQL(this.db, "SELECT nom FROM oktopios_migrations ORDER BY applique_le, nom", [])
+        var noms = []
+        for (r in lignesSql) { noms = noms + [r["nom"]] }
+        return noms
     }
 }

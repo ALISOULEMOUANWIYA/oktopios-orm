@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.0] — Query enrichi + migrations incrémentales
+
+### Ajouté
+- **`Query`** : `orWhere`, `whereIn(col, liste)`, `like(col, motif)`,
+  `join(table, on)`, `first()` (en plus de `where`/`orderBy`/`limit`/`offset`/
+  `count`/`get`). `Repo.query()` crée une requête liée à la table, et
+  `Repo.hydrateRows(lignes)` transforme des lignes en entités :
+  ```okp
+  repo.hydrateRows(repo.query().where("age", ">", 18).orderBy("nom", "ASC").get())
+  ```
+- **`Migrator`** — migrations incrémentales façon Alembic : suit les migrations
+  appliquées dans une table `oktopios_migrations`, n'exécute que les nouvelles,
+  dans l'ordre. `appliquer(nom, sql)`, `migrer(liste)` (idempotent),
+  `estApplique(nom)`, `appliquees()`.
+
 ## [0.4.0] — Relations `@OneToMany` et `@ManyToMany`
 
 ### Ajouté

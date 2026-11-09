@@ -226,3 +226,56 @@ def test_orm_one_to_many_and_many_to_many(tmp_path):
     out = _run_okp(PROG_COLL.format(db=db), tmp_path)
     assert "o2m=3" in out, out               # @OneToMany : 3 articles de l'auteur
     assert "m2m=news,tech," in out, out      # @ManyToMany via table de jointure
+
+
+PROG_QM = '''use "oktopios_orm/orm.okp"
+
+@Entity("users")
+class User {{
+    @Id var id: int
+    @Column("nom") var nom: string
+    @Column("age") var age: int
+}}
+
+var db = "{db}"
+
+var mig = new Migrator(db)
+var migrations = [
+    {{ "nom": "001_users", "sql": "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, nom TEXT, age INTEGER)" }},
+    {{ "nom": "002_ville", "sql": "ALTER TABLE users ADD COLUMN ville TEXT" }}
+]
+print("mig1=" + mig.migrer(migrations))
+print("mig2=" + mig.migrer(migrations))
+
+var repo = new Repo(db, new User())
+var noms = ["Awa", "Ben", "Cid", "Dot"]
+var ages = [25, 30, 15, 65]
+var i = 0
+for (nom in noms) {{
+    var u = new User()
+    u.nom = nom
+    u.age = ages[i]
+    repo.save(u)
+    i = i + 1
+}}
+
+var ents = repo.hydrateRows(repo.query().where("age", ">", 18).orderBy("age", "ASC").get())
+var ordre = ""
+for (u in ents) {{ ordre = ordre + u.nom + "," }}
+print("where=" + ordre)
+print("in=" + repo.query().whereIn("nom", ["Awa", "Ben"]).count())
+var prem = repo.query().like("nom", "A%").first()
+print("like=" + prem["nom"])
+print("or=" + repo.query().where("age", "<", 18).orWhere("age", ">", 60).count())
+'''
+
+
+def test_orm_migrator_and_rich_query(tmp_path):
+    db = str(tmp_path / "qm.db").replace("\\", "/")
+    out = _run_okp(PROG_QM.format(db=db), tmp_path)
+    assert "mig1=2" in out, out                   # 2 migrations appliquées
+    assert "mig2=0" in out, out                   # idempotent (rien de nouveau)
+    assert "where=Awa,Ben,Dot," in out, out       # where + orderBy ASC
+    assert "in=2" in out, out                     # whereIn
+    assert "like=Awa" in out, out                 # like + first
+    assert "or=2" in out, out                     # orWhere
