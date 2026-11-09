@@ -120,6 +120,10 @@ for (t in art.tags) { print(t.libelle) }           // @ManyToMany chargé
 `@ManyToMany` crée la **table de jointure** à la migration ; `Repo.attach` y
 insère les liens. Les collections sont chargées sur un niveau (pas de récursion).
 
+**Inverse automatique** : `@OneToMany("Article")` (sans colonne) infère la clé
+étrangère `<classe>_id`. **Cascade** : `repo.saveCascade(auteur)` enregistre
+l'auteur et ses `articles`. **Lazy** : `repo.findLazy(id)` charge sans relations.
+
 ## Pagination 📄
 
 ```okp
@@ -156,11 +160,14 @@ que les nouvelles, dans l'ordre — **idempotent** :
 ```okp
 var mig = new Migrator("app.db")
 var n = mig.migrer([
-    { "nom": "001_users",  "sql": "CREATE TABLE users (id INTEGER PRIMARY KEY, nom TEXT)" },
-    { "nom": "002_ville",  "sql": "ALTER TABLE users ADD COLUMN ville TEXT" }
+    { "nom": "001_users", "sql": "CREATE TABLE users (id INTEGER PRIMARY KEY, nom TEXT)", "down": "DROP TABLE users" },
+    { "nom": "002_ville", "sql": "ALTER TABLE users ADD COLUMN ville TEXT" }
 ])
 print(n)                    // nb réellement appliquées (0 au 2e lancement)
 print(mig.appliquees())    // ["001_users", "002_ville"]
+
+mig.rollbackLast()          // annule "002_ville" (via son "down" s'il existe)
+mig.rollback("001_users")   // exécute "DROP TABLE users" et retire du suivi
 ```
 
 ## Décorateurs reconnus

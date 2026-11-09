@@ -279,3 +279,82 @@ def test_orm_migrator_and_rich_query(tmp_path):
     assert "in=2" in out, out                     # whereIn
     assert "like=Awa" in out, out                 # like + first
     assert "or=2" in out, out                     # orWhere
+
+
+PROG_CASCADE = '''use "oktopios_orm/orm.okp"
+
+@Entity("auteurs")
+class Auteur {{
+    @Id var id: int
+    @Column("nom") var nom: string
+    @OneToMany("Article") var articles: any
+}}
+@Entity("articles")
+class Article {{
+    @Id var id: int
+    @Column("titre") var titre: string
+    @ManyToOne("Auteur") var auteur: any
+}}
+
+var db = "{db}"
+var schema = new Schema()
+schema.migrate(db, new Auteur())
+schema.migrate(db, new Article())
+
+var exA = new Auteur()
+print("fk=" + schema.o2mFk(exA, "articles"))
+
+var repoAut = new Repo(db, new Auteur())
+var a = new Auteur()
+a.nom = "Awa"
+var t1 = new Article()
+t1.titre = "T1"
+var t2 = new Article()
+t2.titre = "T2"
+a.articles = [t1, t2]
+repoAut.saveCascade(a)
+
+var charge = repoAut.find(a.id)
+var c = 0
+for (x in charge.articles) {{ c = c + 1 }}
+print("cascade=" + c)
+
+var lazy = repoAut.findLazy(a.id)
+if (lazy.articles == null) {{ print("lazy=null") }}
+'''
+
+
+def test_orm_cascade_inferred_fk_and_lazy(tmp_path):
+    db = str(tmp_path / "cs.db").replace("\\", "/")
+    out = _run_okp(PROG_CASCADE.format(db=db), tmp_path)
+    assert "fk=auteur_id" in out, out        # FK @OneToMany inférée (inverse auto)
+    assert "cascade=2" in out, out           # saveCascade a enregistré les 2 enfants
+    assert "lazy=null" in out, out           # findLazy ne charge pas les relations
+
+
+PROG_ROLLBACK = '''use "oktopios_orm/orm.okp"
+inject DataImport
+
+var db = "{db}"
+var mig = new Migrator(db)
+var migrations = [
+    {{ "nom": "001_t", "sql": "CREATE TABLE t (id INTEGER PRIMARY KEY)", "down": "DROP TABLE t" }},
+    {{ "nom": "002_u", "sql": "CREATE TABLE u (id INTEGER PRIMARY KEY)", "down": "DROP TABLE u" }}
+]
+print("mig=" + mig.migrer(migrations))
+print("last=" + mig.rollbackLast())
+print("etat=" + mig.appliquees())
+var ex = DataImport.execSQL(db, "SELECT name FROM sqlite_master WHERE type='table' AND name='u'", [])
+var n = 0
+for (r in ex) {{ n = n + 1 }}
+print("u=" + n)
+'''
+
+
+def test_orm_migration_rollback(tmp_path):
+    db = str(tmp_path / "rb.db").replace("\\", "/")
+    out = _run_okp(PROG_ROLLBACK.format(db=db), tmp_path)
+    assert "mig=2" in out, out
+    assert "last=002_u" in out, out          # rollbackLast renvoie la dernière
+    assert "etat=['001_t']" in out, out      # 002 retirée du suivi
+    assert "u=0" in out, out                 # table u supprimée par le `down`

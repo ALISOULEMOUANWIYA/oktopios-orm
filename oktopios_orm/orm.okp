@@ -14,6 +14,8 @@
 // =====================================================================
 inject Type
 inject DataImport
+inject String
+inject Map
 
 // ---------------------------------------------------------------------
 //  Schema — génération de schéma / migrations
@@ -84,9 +86,14 @@ class Schema {
         var a = Type.fieldAnnotation(entity, f, "OneToMany")
         return a[0]
     }
+    // Colonne FK dans l'enfant : 2e argument, sinon inférée <classe>_id
+    // (inverse automatique d'un @ManyToOne). Ex. Auteur -> "auteur_id".
     fun o2mFk(entity: any, f: string): string {
         var a = Type.fieldAnnotation(entity, f, "OneToMany")
-        return a[1]
+        var n = 0
+        for (x in a) { n = n + 1 }
+        if (n > 1) { return a[1] }
+        return String.lower(Type.className(entity)) + "_id"
     }
 
     // @ManyToMany("Autre", "table_jointure", "fk_ici", "fk_autre")
@@ -320,6 +327,41 @@ class Repo {
         return lies[0]
     }
 
+    // Comme find mais SANS charger les relations (chargement paresseux).
+    fun findLazy(id: any): any {
+        var lies = this.findByRaw(this.idColumn(), id, false)
+        var n = 0
+        for (x in lies) { n = n + 1 }
+        if (n == 0) { return null }
+        return lies[0]
+    }
+
+    // Enregistre l'entité puis, en cascade, ses collections @OneToMany :
+    // chaque enfant reçoit une référence au parent et est sauvegardé.
+    fun saveCascade(entity: any): int {
+        var id = this.save(entity)
+        for (f in Type.fields(entity)) {
+            if (this.schema.isOneToMany(entity, f) == true) {
+                var enfants = Type.get(entity, f)
+                if (enfants != null) {
+                    var enfRepo = new Repo(this.db, Type.create(this.schema.o2mClass(entity, f)))
+                    var fkCol = this.schema.o2mFk(entity, f)
+                    for (enf in enfants) {
+                        for (cf in Type.fields(enf)) {
+                            if (this.schema.isRelation(enf, cf) == true) {
+                                if (this.schema.fkColumn(enf, cf) == fkCol) {
+                                    Type.set(enf, cf, entity)
+                                }
+                            }
+                        }
+                        enfRepo.save(enf)
+                    }
+                }
+            }
+        }
+        return id
+    }
+
     fun remove(colonne: string, valeur: any): int {
         var sql = "DELETE FROM " + this.table + " WHERE " + colonne + " = ?"
         return DataImport.execSQL(this.db, sql, [valeur])
@@ -478,7 +520,7 @@ class Migrator {
 
     fun __construct(db: string) {
         this.db = db
-        DataImport.execSQL(db, "CREATE TABLE IF NOT EXISTS oktopios_migrations (nom TEXT PRIMARY KEY, applique_le TEXT)", [])
+        DataImport.execSQL(db, "CREATE TABLE IF NOT EXISTS oktopios_migrations (nom TEXT PRIMARY KEY, applique_le TEXT, descente TEXT)", [])
     }
 
     fun estApplique(nom: any): bool {
@@ -488,24 +530,48 @@ class Migrator {
         return n > 0
     }
 
-    // Applique une migration (SQL brut) si pas déjà faite. Renvoie true si
-    // elle vient d'être appliquée, false si elle l'était déjà.
-    fun appliquer(nom: any, sql: any): bool {
+    // Applique une migration (SQL `sql`) si pas déjà faite, en mémorisant le
+    // SQL de descente `down` (peut être null) pour un futur rollback.
+    fun appliquer(nom: any, sql: any, down: any): bool {
         if (this.estApplique(nom) == true) { return false }
         DataImport.execSQL(this.db, sql, [])
-        DataImport.execSQL(this.db, "INSERT INTO oktopios_migrations (nom, applique_le) VALUES (?, datetime('now'))", [nom])
+        DataImport.execSQL(this.db, "INSERT INTO oktopios_migrations (nom, applique_le, descente) VALUES (?, datetime('now'), ?)", [nom, down])
         return true
     }
 
-    // Applique une liste ORDONNÉE de migrations { "nom": ..., "sql": ... }.
+    // Applique une liste ORDONNÉE de migrations { "nom", "sql", "down"? }.
     // Idempotent : relancer n'applique que les nouvelles. Renvoie le nombre
     // réellement appliquées.
     fun migrer(liste: any): int {
         var n = 0
         for (m in liste) {
-            if (this.appliquer(m["nom"], m["sql"]) == true) { n = n + 1 }
+            var down = null
+            if (Map.has(m, "down") == true) { down = m["down"] }
+            if (this.appliquer(m["nom"], m["sql"], down) == true) { n = n + 1 }
         }
         return n
+    }
+
+    // Annule une migration : exécute son SQL de descente (si présent) puis la
+    // retire du suivi. Renvoie true si elle était appliquée.
+    fun rollback(nom: any): bool {
+        if (this.estApplique(nom) == false) { return false }
+        var lignesSql = DataImport.execSQL(this.db, "SELECT descente FROM oktopios_migrations WHERE nom = ?", [nom])
+        var down = null
+        for (r in lignesSql) { down = r["descente"] }
+        if (down != null) { DataImport.execSQL(this.db, down, []) }
+        DataImport.execSQL(this.db, "DELETE FROM oktopios_migrations WHERE nom = ?", [nom])
+        return true
+    }
+
+    // Annule la dernière migration appliquée ; renvoie son nom, ou null.
+    fun rollbackLast(): any {
+        var lignesSql = DataImport.execSQL(this.db, "SELECT nom FROM oktopios_migrations ORDER BY applique_le DESC, nom DESC LIMIT 1", [])
+        var nom = null
+        for (r in lignesSql) { nom = r["nom"] }
+        if (nom == null) { return null }
+        this.rollback(nom)
+        return nom
     }
 
     // Noms des migrations déjà appliquées (ordre d'application).

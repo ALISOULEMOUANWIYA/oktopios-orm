@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.6.0] — Cascade / lazy, `@OneToMany` inverse auto, rollback de migrations
+
+### Ajouté
+- **`@OneToMany("Classe")`** sans colonne : la clé étrangère est **inférée**
+  (`<classe>_id`) — inverse automatique d'un `@ManyToOne`.
+- **`Repo.saveCascade(entity)`** : enregistre l'entité **et** ses collections
+  `@OneToMany` (chaque enfant reçoit la référence au parent).
+- **`Repo.findLazy(id)`** : charge l'entité **sans** ses relations (paresseux).
+- **Rollback de migrations** : les migrations acceptent un SQL de descente
+  `"down"` ; `Migrator.rollback(nom)` et `Migrator.rollbackLast()` l'exécutent
+  et retirent la migration du suivi.
+
+### Changé
+- `Migrator.appliquer(nom, sql, down)` prend un 3ᵉ argument `down` (le SQL de
+  descente, `null` si aucun). La table `oktopios_migrations` gagne une colonne
+  `descente`.
+
 ## [0.5.0] — Query enrichi + migrations incrémentales
 
 ### Ajouté
