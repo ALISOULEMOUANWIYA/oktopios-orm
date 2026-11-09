@@ -91,6 +91,35 @@ print(trouve.auteur.nom)                             // -> "Awa" (objet lié cha
 `@ManyToOne("Classe")` crée une colonne de clé étrangère `<champ>_id` (ou le 2ᵉ
 argument), écrite par `save` et chargée par `find`/`findBy` (un niveau).
 
+### Collections : `@OneToMany` et `@ManyToMany`
+
+```okp
+@Entity("auteurs")
+class Auteur {
+    @Id var id: int
+    @Column("nom") var nom: string
+    @OneToMany("Article", "auteur_id") var articles: any     // inverse de @ManyToOne
+}
+
+@Entity("articles")
+class Article {
+    @Id var id: int
+    @Column("titre") var titre: string
+    @ManyToOne("Auteur") var auteur: any
+    @ManyToMany("Tag", "article_tag", "article_id", "tag_id") var tags: any
+}
+
+var auteur = repoAuteur.find(1)
+for (a in auteur.articles) { print(a.titre) }      // @OneToMany chargé
+
+repoArt.attach(article, "tags", tag)                // lie via la table de jointure
+var art = repoArt.find(1)
+for (t in art.tags) { print(t.libelle) }           // @ManyToMany chargé
+```
+
+`@ManyToMany` crée la **table de jointure** à la migration ; `Repo.attach` y
+insère les liens. Les collections sont chargées sur un niveau (pas de récursion).
+
 ## Pagination 📄
 
 ```okp
@@ -108,7 +137,9 @@ for (x in repoArt.page(10, 2)) {  // page 2, 10 par page (entités hydratées)
 | `@Entity("table")` | classe | nom de la table |
 | `@Column("colonne")` | champ | nom de la colonne |
 | `@Id` | champ | clé primaire (auto-générée, réaffectée par `save`) |
-| `@ManyToOne("Classe", "fk"?)` | champ | relation vers une autre entité |
+| `@ManyToOne("Classe", "fk"?)` | champ | relation N-1 (colonne FK ici) |
+| `@OneToMany("Enfant", "fk")` | champ | collection inverse (1-N) |
+| `@ManyToMany("Autre", "jointure", "fk_ici", "fk_autre")` | champ | relation N-N (table de jointure) |
 
 ## Licence
 

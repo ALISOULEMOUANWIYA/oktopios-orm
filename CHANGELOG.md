@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.0] — Relations `@OneToMany` et `@ManyToMany`
+
+### Ajouté
+- **`@OneToMany("ClasseEnfant", "fk_dans_enfant")`** — collection inverse d'un
+  `@ManyToOne` : `find`/`hydrate` charge la liste des enfants
+  (ex. `auteur.articles`).
+- **`@ManyToMany("Autre", "table_jointure", "fk_ici", "fk_autre")`** — relation
+  N-N via une table de jointure :
+  - `Schema.migrate` crée automatiquement la table de jointure ;
+  - `Repo.attach(entity, champ, lie)` insère un lien ;
+  - `find`/`hydrate` charge la collection liée par jointure (ex. `article.tags`).
+- Les collections (`@OneToMany`/`@ManyToMany`) ne créent pas de colonne sur la
+  table de l'entité et sont ignorées par `save` ; chargées un seul niveau
+  (pas de récursion).
+
 ## [0.3.0] — Relations `@ManyToOne` + pagination
 
 ### Ajouté

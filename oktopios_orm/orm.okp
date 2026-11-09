@@ -45,9 +45,24 @@ class Schema {
         return "id"
     }
 
-    // --- Relations @ManyToOne("ClasseLiee", "colonne_fk"?) --------------
+    // --- Relations ------------------------------------------------------
+    //  @ManyToOne("Classe", "fk"?)                        -> colonne FK ici
+    //  @OneToMany("ClasseEnfant", "fk_dans_enfant")       -> collection (inverse)
+    //  @ManyToMany("Autre", "table_jointure", "fk_ici", "fk_autre") -> N-N
+
     fun isRelation(entity: any, f: string): bool {
         return Type.fieldAnnotation(entity, f, "ManyToOne") != null
+    }
+    fun isOneToMany(entity: any, f: string): bool {
+        return Type.fieldAnnotation(entity, f, "OneToMany") != null
+    }
+    fun isManyToMany(entity: any, f: string): bool {
+        return Type.fieldAnnotation(entity, f, "ManyToMany") != null
+    }
+    // Vrai pour une relation « collection » (pas de colonne sur cette table).
+    fun isCollection(entity: any, f: string): bool {
+        if (this.isOneToMany(entity, f) == true) { return true }
+        return this.isManyToMany(entity, f)
     }
 
     fun relClass(entity: any, f: string): string {
@@ -55,7 +70,7 @@ class Schema {
         return a[0]
     }
 
-    // Colonne de clé étrangère : 2e argument du décorateur, sinon <champ>_id.
+    // Colonne de clé étrangère @ManyToOne : 2e argument, sinon <champ>_id.
     fun fkColumn(entity: any, f: string): string {
         var a = Type.fieldAnnotation(entity, f, "ManyToOne")
         var n = 0
@@ -64,28 +79,66 @@ class Schema {
         return f + "_id"
     }
 
+    // @OneToMany("ClasseEnfant", "fk_dans_enfant")
+    fun o2mClass(entity: any, f: string): string {
+        var a = Type.fieldAnnotation(entity, f, "OneToMany")
+        return a[0]
+    }
+    fun o2mFk(entity: any, f: string): string {
+        var a = Type.fieldAnnotation(entity, f, "OneToMany")
+        return a[1]
+    }
+
+    // @ManyToMany("Autre", "table_jointure", "fk_ici", "fk_autre")
+    fun m2mClass(entity: any, f: string): string {
+        var a = Type.fieldAnnotation(entity, f, "ManyToMany")
+        return a[0]
+    }
+    fun m2mJoin(entity: any, f: string): string {
+        var a = Type.fieldAnnotation(entity, f, "ManyToMany")
+        return a[1]
+    }
+    fun m2mFkHere(entity: any, f: string): string {
+        var a = Type.fieldAnnotation(entity, f, "ManyToMany")
+        return a[2]
+    }
+    fun m2mFkOther(entity: any, f: string): string {
+        var a = Type.fieldAnnotation(entity, f, "ManyToMany")
+        return a[3]
+    }
+
     fun createTableSQL(entity: any): string {
         var defs = ""
         for (f in Type.fields(entity)) {
-            if (defs != "") { defs = defs + ", " }
-            if (this.isRelation(entity, f) == true) {
-                // Relation -> colonne de clé étrangère entière.
-                defs = defs + this.fkColumn(entity, f) + " INTEGER"
-            } else {
-                var ligne = this.columnName(entity, f) + " " + this.sqlType(Type.fieldType(entity, f))
-                if (Type.fieldAnnotation(entity, f, "Id") != null) {
-                    ligne = ligne + " PRIMARY KEY"
+            if (this.isCollection(entity, f) == false) {
+                // (les collections @OneToMany/@ManyToMany n'ont pas de colonne ici)
+                var morceau = ""
+                if (this.isRelation(entity, f) == true) {
+                    morceau = this.fkColumn(entity, f) + " INTEGER"
+                } else {
+                    morceau = this.columnName(entity, f) + " " + this.sqlType(Type.fieldType(entity, f))
+                    if (Type.fieldAnnotation(entity, f, "Id") != null) {
+                        morceau = morceau + " PRIMARY KEY"
+                    }
                 }
-                defs = defs + ligne
+                if (defs != "") { defs = defs + ", " }
+                defs = defs + morceau
             }
         }
         return "CREATE TABLE IF NOT EXISTS " + this.tableName(entity) + " (" + defs + ")"
     }
 
-    // Crée la table dans la base à partir d'un exemple d'entité (modèle décoré)
+    // Crée la table de l'entité + les tables de jointure de ses @ManyToMany.
     fun migrate(db: string, entity: any): string {
         var sql = this.createTableSQL(entity)
         DataImport.execSQL(db, sql, [])
+        for (f in Type.fields(entity)) {
+            if (this.isManyToMany(entity, f) == true) {
+                var jt = this.m2mJoin(entity, f)
+                var jsql = "CREATE TABLE IF NOT EXISTS " + jt + " (" + this.m2mFkHere(entity, f) + " INTEGER, " + this.m2mFkOther(entity, f) + " INTEGER)"
+                DataImport.execSQL(db, jsql, [])
+            }
+        }
         return sql
     }
 }
@@ -116,24 +169,28 @@ class Repo {
         var marques = ""
         var valeurs = []
         for (f in Type.fields(entity)) {
+            // On saute la clé primaire (auto) et les collections (pas de colonne).
             if (f != idf) {
-                if (colonnes != "") {
-                    colonnes = colonnes + ", "
-                    marques = marques + ", "
-                }
-                if (this.schema.isRelation(entity, f) == true) {
-                    colonnes = colonnes + this.schema.fkColumn(entity, f)
-                    marques = marques + "?"
-                    var lie = Type.get(entity, f)
-                    if (lie == null) {
-                        valeurs = valeurs + [null]
+                if (this.schema.isCollection(entity, f) == false) {
+                    var col = ""
+                    var valeur = null
+                    if (this.schema.isRelation(entity, f) == true) {
+                        col = this.schema.fkColumn(entity, f)
+                        var lie = Type.get(entity, f)
+                        if (lie != null) {
+                            valeur = Type.get(lie, this.schema.idField(lie))
+                        }
                     } else {
-                        valeurs = valeurs + [Type.get(lie, this.schema.idField(lie))]
+                        col = this.schema.columnName(entity, f)
+                        valeur = Type.get(entity, f)
                     }
-                } else {
-                    colonnes = colonnes + this.schema.columnName(entity, f)
+                    if (colonnes != "") {
+                        colonnes = colonnes + ", "
+                        marques = marques + ", "
+                    }
+                    colonnes = colonnes + col
                     marques = marques + "?"
-                    valeurs = valeurs + [Type.get(entity, f)]
+                    valeurs = valeurs + [valeur]
                 }
             }
         }
@@ -145,6 +202,15 @@ class Repo {
         return nouvelId
     }
 
+    // Lie `entity` à `lie` via la table de jointure du champ @ManyToMany `f`.
+    fun attach(entity: any, f: string, lie: any): int {
+        var jt = this.schema.m2mJoin(entity, f)
+        var monId = Type.get(entity, this.schema.idField(entity))
+        var autreId = Type.get(lie, this.schema.idField(lie))
+        var sql = "INSERT INTO " + jt + " (" + this.schema.m2mFkHere(entity, f) + ", " + this.schema.m2mFkOther(entity, f) + ") VALUES (?, ?)"
+        return DataImport.execSQL(this.db, sql, [monId, autreId])
+    }
+
     // Transforme les lignes SQL (colonnes) en instances du modèle (champs).
     // `avecRelations` : si vrai, charge aussi les objets liés (@ManyToOne),
     // un seul niveau de profondeur (pas de récursion sur leurs relations).
@@ -152,22 +218,60 @@ class Repo {
         var obj = Type.create(this.model)
         for (f in Type.fields(obj)) {
             if (this.schema.isRelation(obj, f) == true) {
-                if (avecRelations == true) {
-                    var fk = ligne[this.schema.fkColumn(obj, f)]
-                    if (fk != null) {
-                        var relRepo = new Repo(this.db, Type.create(this.schema.relClass(obj, f)))
-                        var lies = relRepo.findByRaw(relRepo.idColumn(), fk, false)
-                        var m = 0
-                        for (z in lies) { m = m + 1 }
-                        if (m > 0) { Type.set(obj, f, lies[0]) }
+                if (avecRelations == true) { this.chargeM2O(obj, f, ligne) }
+            } else {
+                if (this.schema.isOneToMany(obj, f) == true) {
+                    if (avecRelations == true) { this.chargeO2M(obj, f, ligne) }
+                } else {
+                    if (this.schema.isManyToMany(obj, f) == true) {
+                        if (avecRelations == true) { this.chargeM2M(obj, f, ligne) }
+                    } else {
+                        var col = this.schema.columnName(obj, f)
+                        Type.set(obj, f, ligne[col])
                     }
                 }
-            } else {
-                var col = this.schema.columnName(obj, f)
-                Type.set(obj, f, ligne[col])
             }
         }
         return obj
+    }
+
+    // @ManyToOne : charge l'objet lié (un seul).
+    fun chargeM2O(obj: any, f: string, ligne: any): any {
+        var fk = ligne[this.schema.fkColumn(obj, f)]
+        if (fk == null) { return null }
+        var relRepo = new Repo(this.db, Type.create(this.schema.relClass(obj, f)))
+        var lies = relRepo.findByRaw(relRepo.idColumn(), fk, false)
+        var m = 0
+        for (z in lies) { m = m + 1 }
+        if (m > 0) { Type.set(obj, f, lies[0]) }
+        return null
+    }
+
+    // @OneToMany : collection d'enfants (enfant.fk = mon id).
+    fun chargeO2M(obj: any, f: string, ligne: any): any {
+        var monId = ligne[this.idColumn()]
+        var enfRepo = new Repo(this.db, Type.create(this.schema.o2mClass(obj, f)))
+        var enfants = enfRepo.findByRaw(this.schema.o2mFk(obj, f), monId, false)
+        Type.set(obj, f, enfants)
+        return null
+    }
+
+    // @ManyToMany : collection via table de jointure.
+    fun chargeM2M(obj: any, f: string, ligne: any): any {
+        var monId = ligne[this.idColumn()]
+        var autreRepo = new Repo(this.db, Type.create(this.schema.m2mClass(obj, f)))
+        var jointure = this.schema.m2mJoin(obj, f)
+        var fkAutre = this.schema.m2mFkOther(obj, f)
+        var fkIci = this.schema.m2mFkHere(obj, f)
+        var jsql = "SELECT o.* FROM " + autreRepo.table + " o JOIN " + jointure + " j ON o." + autreRepo.idColumn() + " = j." + fkAutre + " WHERE j." + fkIci + " = ?"
+        var lignes = DataImport.execSQL(this.db, jsql, [monId])
+        var relus = []
+        for (r in lignes) {
+            var o = autreRepo.hydrateOne(r, false)
+            relus = relus + [o]
+        }
+        Type.set(obj, f, relus)
+        return null
     }
 
     fun hydrate(lignes: any): any {
