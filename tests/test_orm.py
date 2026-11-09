@@ -358,3 +358,32 @@ def test_orm_migration_rollback(tmp_path):
     assert "last=002_u" in out, out          # rollbackLast renvoie la dernière
     assert "etat=['001_t']" in out, out      # 002 retirée du suivi
     assert "u=0" in out, out                 # table u supprimée par le `down`
+
+
+PROG_UPDATE = '''use "oktopios_orm/orm.okp"
+@Entity("p")
+class P {{ @Id var id: int  @Column("nom") var nom: string }}
+var db = "{db}"
+var schema = new Schema()
+schema.migrate(db, new P())
+var repo = new Repo(db, new P())
+var a = new P()
+a.nom = "avant"
+repo.save(a)
+a.nom = "apres"
+print("upd=" + repo.update(a))
+var relu = repo.find(a.id)
+print("nom=" + relu.nom)
+print("del=" + repo.removeById(a.id))
+var apres = repo.find(a.id)
+if (apres == null) {{ print("gone=1") }}
+'''
+
+
+def test_orm_update_and_remove_by_id(tmp_path):
+    db = str(tmp_path / "up.db").replace("\\", "/")
+    out = _run_okp(PROG_UPDATE.format(db=db), tmp_path)
+    assert "upd=1" in out, out
+    assert "nom=apres" in out, out
+    assert "del=1" in out, out
+    assert "gone=1" in out, out

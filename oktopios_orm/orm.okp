@@ -209,6 +209,43 @@ class Repo {
         return nouvelId
     }
 
+    // Met à jour l'entité par son @Id (colonnes et clés étrangères @ManyToOne).
+    // Renvoie le nombre de lignes modifiées.
+    fun update(entity: any): int {
+        var idf = this.schema.idField(entity)
+        var sets = ""
+        var valeurs = []
+        for (f in Type.fields(entity)) {
+            if (f != idf) {
+                if (this.schema.isCollection(entity, f) == false) {
+                    var col = ""
+                    var valeur = null
+                    if (this.schema.isRelation(entity, f) == true) {
+                        col = this.schema.fkColumn(entity, f)
+                        var lie = Type.get(entity, f)
+                        if (lie != null) {
+                            valeur = Type.get(lie, this.schema.idField(lie))
+                        }
+                    } else {
+                        col = this.schema.columnName(entity, f)
+                        valeur = Type.get(entity, f)
+                    }
+                    if (sets != "") { sets = sets + ", " }
+                    sets = sets + col + " = ?"
+                    valeurs = valeurs + [valeur]
+                }
+            }
+        }
+        valeurs = valeurs + [Type.get(entity, idf)]
+        var sql = "UPDATE " + this.table + " SET " + sets + " WHERE " + this.idColumn() + " = ?"
+        return DataImport.execSQL(this.db, sql, valeurs)
+    }
+
+    // Supprime une entité par son identifiant.
+    fun removeById(id: any): int {
+        return this.remove(this.idColumn(), id)
+    }
+
     // Lie `entity` à `lie` via la table de jointure du champ @ManyToMany `f`.
     fun attach(entity: any, f: string, lie: any): int {
         var jt = this.schema.m2mJoin(entity, f)

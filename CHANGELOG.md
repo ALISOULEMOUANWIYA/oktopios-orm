@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.7.0] — `Repo.update` et `Repo.removeById`
+
+### Ajouté
+- **`Repo.update(entity)`** : met à jour une entité par son `@Id` (colonnes et
+  clés étrangères `@ManyToOne`) ; renvoie le nombre de lignes modifiées.
+- **`Repo.removeById(id)`** : supprime une entité par son identifiant.
+
+Complète le CRUD (nécessaire notamment à l'API REST `PUT`/`DELETE` du framework).
+
 ## [0.6.0] — Cascade / lazy, `@OneToMany` inverse auto, rollback de migrations
 
 ### Ajouté

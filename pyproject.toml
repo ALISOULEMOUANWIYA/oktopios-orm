@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "oktopios-orm"
-version = "0.6.0"
+version = "0.7.0"
 description = "ORM pour le langage Oktopios — modeles decores, migrations, query-builder (facon Doctrine / Django ORM)"
 readme = "README.md"
 license = { file = "LICENSE" }
